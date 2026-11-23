@@ -1,38 +1,34 @@
-// THE WORLD TODAY — Monday 23 November 2026
-// A newspaper front page drawn from scratch with the Node 22 standard
-// library only. No network, no external images, no clock, no randomness:
-// two runs write byte-identical PNG files.
-//
-// Run:  mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-// Output: $MAKEFUN_OUTPUT_DIR/entry.png  (default: /output/entry.png)
+// THE WORLD TODAY — Monday 23 November 2026.
+// A Node 22+ program (standard library only) that draws a 1024x1024
+// newspaper front page and writes it to $MAKEFUN_OUTPUT_DIR/entry.png.
+// No network, no external images, no Date.now, no Math.random:
+// every run writes byte-identical output.
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { deflateSync } from "node:zlib";
-import { join } from "node:path";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as zlib from "node:zlib";
 
-// ---------------------------------------------------------------- canvas
 const W = 1024;
 const H = 1024;
+const PAPER = [247, 242, 227];
+const INK = [17, 17, 17];
+const RED = [140, 29, 24];
+const GREY = [96, 92, 80];
+const MAPFILL = [233, 224, 196];
+
 const buf = new Uint8Array(W * H * 3);
+for (let i = 0; i < W * H; i++) {
+  buf[i * 3] = PAPER[0];
+  buf[i * 3 + 1] = PAPER[1];
+  buf[i * 3 + 2] = PAPER[2];
+}
 
-const PAPER = [247, 243, 232];
-const INK = [24, 24, 24];
-const SOFT = [74, 72, 66];
-const RED = [168, 18, 18];
-const DARKRED = [120, 10, 10];
-const BLUE = [28, 63, 110];
-const SKY = [198, 214, 232];
-const SAND = [232, 226, 208];
-const WHITE = [255, 255, 255];
-const GOLD = [176, 124, 24];
-const GREEN = [36, 110, 60];
-
-function setPx(x, y, c) {
-  if (x < 0 || y < 0 || x >= W || y >= H) return;
-  const i = (y * W + x) * 3;
-  buf[i] = c[0];
-  buf[i + 1] = c[1];
-  buf[i + 2] = c[2];
+function setPixel(x, y, c) {
+  if (x < 0 || x >= W || y < 0 || y >= H) return;
+  const o = (y * W + x) * 3;
+  buf[o] = c[0];
+  buf[o + 1] = c[1];
+  buf[o + 2] = c[2];
 }
 
 function fillRect(x, y, w, h, c) {
@@ -42,39 +38,23 @@ function fillRect(x, y, w, h, c) {
   const y1 = Math.min(H, y + h);
   for (let yy = y0; yy < y1; yy++) {
     for (let xx = x0; xx < x1; xx++) {
-      const i = (yy * W + xx) * 3;
-      buf[i] = c[0];
-      buf[i + 1] = c[1];
-      buf[i + 2] = c[2];
+      const o = (yy * W + xx) * 3;
+      buf[o] = c[0];
+      buf[o + 1] = c[1];
+      buf[o + 2] = c[2];
     }
   }
 }
 
-function hline(x0, x1, y, c, th) {
-  const t = th || 1;
-  for (let k = 0; k < t; k++) {
-    for (let x = x0; x <= x1; x++) setPx(x, y + k, c);
-  }
+function hline(x, y, w, c, t = 1) {
+  fillRect(x, y, w, t, c);
 }
 
-function vline(x, y0, y1, c, th) {
-  const t = th || 1;
-  for (let k = 0; k < t; k++) {
-    for (let y = y0; y <= y1; y++) setPx(x + k, y, c);
-  }
+function vline(x, y, h, c, t = 1) {
+  fillRect(x, y, t, h, c);
 }
 
-function rect(x, y, w, h, c, th) {
-  const t = th || 1;
-  hline(x, x + w - 1, y, c, t);
-  hline(x, x + w - 1, y + h - t, c, t);
-  vline(x, y, y + h - 1, c, t);
-  vline(x + w - t, y, y + h - 1, c, t);
-}
-
-// Bresenham line.
-function line(x0, y0, x1, y1, c, th) {
-  const t = th || 1;
+function line(x0, y0, x1, y1, c) {
   const dx = Math.abs(x1 - x0);
   const dy = Math.abs(y1 - y0);
   const sx = x0 < x1 ? 1 : -1;
@@ -83,8 +63,7 @@ function line(x0, y0, x1, y1, c, th) {
   let x = x0;
   let y = y0;
   for (;;) {
-    if (t === 1) setPx(x, y, c);
-    else fillRect(x - ((t / 2) | 0), y - ((t / 2) | 0), t, t, c);
+    setPixel(x, y, c);
     if (x === x1 && y === y1) break;
     const e2 = 2 * err;
     if (e2 > -dy) {
@@ -98,48 +77,22 @@ function line(x0, y0, x1, y1, c, th) {
   }
 }
 
-function dashedLine(x0, y0, x1, y1, c) {
-  const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
-  for (let i = 0; i <= steps; i++) {
-    if (((i / 6) | 0) % 2 === 0) {
-      const x = Math.round(x0 + ((x1 - x0) * i) / steps);
-      const y = Math.round(y0 + ((y1 - y0) * i) / steps);
-      setPx(x, y, c);
-      setPx(x + 1, y, c);
-    }
+function rectOutline(x, y, w, h, c, t = 1) {
+  fillRect(x, y, w, t, c);
+  fillRect(x, y + h - t, w, t, c);
+  fillRect(x, y, t, h, c);
+  fillRect(x + w - t, y, t, h, c);
+}
+
+function polygonOutline(pts, c) {
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    line(a[0], a[1], b[0], b[1], c);
   }
 }
 
-function fillCircle(cx, cy, r, c) {
-  for (let y = -r; y <= r; y++) {
-    const half = Math.floor(Math.sqrt(r * r - y * y));
-    for (let x = -half; x <= half; x++) setPx(cx + x, cy + y, c);
-  }
-}
-
-function circle(cx, cy, r, c) {
-  let x = r;
-  let y = 0;
-  let err = 0;
-  while (x >= y) {
-    setPx(cx + x, cy + y, c);
-    setPx(cx + y, cy + x, c);
-    setPx(cx - y, cy + x, c);
-    setPx(cx - x, cy + y, c);
-    setPx(cx - x, cy - y, c);
-    setPx(cx - y, cy - x, c);
-    setPx(cx + y, cy - x, c);
-    setPx(cx + x, cy - y, c);
-    y += 1;
-    err += 1 + 2 * y;
-    if (2 * (err - x) + 1 > 0) {
-      x -= 1;
-      err += 1 - 2 * x;
-    }
-  }
-}
-
-function fillPoly(pts, c) {
+function fillPolygon(pts, c) {
   let minY = H;
   let maxY = 0;
   for (const p of pts) {
@@ -152,511 +105,34 @@ function fillPoly(pts, c) {
       const a = pts[i];
       const b = pts[(i + 1) % pts.length];
       if ((a[1] <= y && b[1] > y) || (b[1] <= y && a[1] > y)) {
-        xs.push(Math.round(a[0] + ((y - a[1]) * (b[0] - a[0])) / (b[1] - a[1])));
+        xs.push(a[0] + ((y - a[1]) * (b[0] - a[0])) / (b[1] - a[1]));
       }
     }
     xs.sort((p, q) => p - q);
-    for (let k = 0; k + 1 < xs.length; k += 2) {
-      for (let x = xs[k]; x <= xs[k + 1]; x++) setPx(x, y, c);
+    for (let i = 0; i + 1 < xs.length; i += 2) {
+      const x0 = Math.max(0, Math.ceil(xs[i]));
+      const x1 = Math.min(W - 1, Math.floor(xs[i + 1]));
+      for (let x = x0; x <= x1; x++) setPixel(x, y, c);
     }
   }
 }
 
-function poly(pts, c, th) {
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[i];
-    const b = pts[(i + 1) % pts.length];
-    line(a[0], a[1], b[0], b[1], c, th || 1);
-  }
-}
-
-// Four-point star (compass rose / map marker).
 function star(cx, cy, r, c) {
-  fillPoly(
-    [
-      [cx, cy - r],
-      [cx + ((r * 2) / 7) | 0, cy - ((r * 2) / 7) | 0],
-      [cx + r, cy],
-      [cx + ((r * 2) / 7) | 0, cy + ((r * 2) / 7) | 0],
-      [cx, cy + r],
-      [cx - ((r * 2) / 7) | 0, cy + ((r * 2) / 7) | 0],
-      [cx - r, cy],
-      [cx - ((r * 2) / 7) | 0, cy - ((r * 2) / 7) | 0],
-    ],
-    c
-  );
-  fillCircle(cx, cy, Math.max(1, (r / 4) | 0), WHITE);
-}
-
-// ------------------------------------------------------------------- font
-// Hand-drawn 5x7 bitmap glyphs. '#' is ink, '.' is blank.
-const GLYPHS = {
-  A: [".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
-  B: ["####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."],
-  C: [".####", "#....", "#....", "#....", "#....", "#....", ".####"],
-  D: ["####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."],
-  E: ["#####", "#....", "#....", "####.", "#....", "#....", "#####"],
-  F: ["#####", "#....", "#....", "####.", "#....", "#....", "#...."],
-  G: [".####", "#....", "#....", "#.###", "#...#", "#...#", ".###."],
-  H: ["#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
-  I: ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "#####"],
-  J: ["..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."],
-  K: ["#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"],
-  L: ["#....", "#....", "#....", "#....", "#....", "#....", "#####"],
-  M: ["#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"],
-  N: ["#...#", "##..#", "##..#", "#.#.#", "#..##", "#..##", "#...#"],
-  O: [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
-  P: ["####.", "#...#", "#...#", "####.", "#....", "#....", "#...."],
-  Q: [".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"],
-  R: ["####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"],
-  S: [".####", "#....", "#....", ".###.", "....#", "....#", "####."],
-  T: ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."],
-  U: ["#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
-  V: ["#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."],
-  W: ["#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"],
-  X: ["#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"],
-  Y: ["#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."],
-  Z: ["#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"],
-  a: [".....", ".....", ".###.", "....#", ".####", "#...#", ".####"],
-  b: ["#....", "#....", "####.", "#...#", "#...#", "#...#", "####."],
-  c: [".....", ".....", ".####", "#....", "#....", "#....", ".####"],
-  d: ["....#", "....#", ".####", "#...#", "#...#", "#...#", ".####"],
-  e: [".....", ".....", ".###.", "#...#", "#####", "#....", ".###."],
-  f: ["..##.", ".#...", ".#...", "####.", ".#...", ".#...", ".#..."],
-  g: [".....", ".####", "#...#", "#...#", ".####", "....#", ".###."],
-  h: ["#....", "#....", "####.", "#...#", "#...#", "#...#", "#...#"],
-  i: [".....", "..#..", ".....", ".##..", "..#..", "..#..", ".###."],
-  j: [".....", "...#.", ".....", "..##.", "...#.", "...#.", ".##.."],
-  k: ["#....", "#....", "#..#.", "#.#..", "##...", "#.#..", "#..#."],
-  l: [".##..", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."],
-  m: [".....", ".....", "##.#.", "#.#.#", "#.#.#", "#.#.#", "#.#.#"],
-  n: [".....", ".....", "####.", "#...#", "#...#", "#...#", "#...#"],
-  o: [".....", ".....", ".###.", "#...#", "#...#", "#...#", ".###."],
-  p: [".....", "####.", "#...#", "#...#", "####.", "#....", "#...."],
-  q: [".....", ".####", "#...#", "#...#", ".####", "....#", "....#"],
-  r: [".....", ".....", "#.##.", "##..#", "#....", "#....", "#...."],
-  s: [".....", ".....", ".####", "#....", ".###.", "....#", "####."],
-  t: [".#...", ".#...", "####.", ".#...", ".#...", ".#...", "..##."],
-  u: [".....", ".....", "#...#", "#...#", "#...#", "#...#", ".###."],
-  v: [".....", ".....", "#...#", "#...#", "#...#", ".#.#.", "..#.."],
-  w: [".....", ".....", "#...#", "#.#.#", "#.#.#", "#.#.#", ".#.#."],
-  x: [".....", ".....", "#...#", ".#.#.", "..#..", ".#.#.", "#...#"],
-  y: [".....", ".....", "#...#", "#...#", ".####", "....#", ".###."],
-  z: [".....", ".....", "#####", "...#.", "..#..", ".#...", "#####"],
-  "0": [".###.", "#..##", "#.#.#", "##..#", "#...#", "#...#", ".###."],
-  "1": ["..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."],
-  "2": [".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"],
-  "3": ["####.", "....#", "....#", ".###.", "....#", "....#", "####."],
-  "4": ["...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."],
-  "5": ["#####", "#....", "####.", "....#", "....#", "#...#", ".###."],
-  "6": [".###.", "#....", "#....", "####.", "#...#", "#...#", ".###."],
-  "7": ["#####", "....#", "...#.", "...#.", "..#..", "..#..", "..#.."],
-  "8": [".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."],
-  "9": [".###.", "#...#", "#...#", ".####", "....#", "....#", ".###."],
-  ".": [".....", ".....", ".....", ".....", ".....", ".##..", ".##.."],
-  ",": [".....", ".....", ".....", ".....", ".##..", ".##..", ".#..."],
-  ":": [".....", ".##..", ".##..", ".....", ".##..", ".##..", "....."],
-  ";": [".....", ".##..", ".##..", ".....", ".##..", ".##..", ".#..."],
-  "'": ["..#..", "..#..", "..#..", ".....", ".....", ".....", "....."],
-  '"': [".#.#.", ".#.#.", ".#.#.", ".....", ".....", ".....", "....."],
-  "!": ["..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.."],
-  "?": [".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.."],
-  "-": [".....", ".....", ".....", ".###.", ".....", ".....", "....."],
-  "(": ["...#.", "..#..", ".#...", ".#...", ".#...", "..#..", "...#."],
-  ")": [".#...", "..#..", "...#.", "...#.", "...#.", "..#..", ".#..."],
-  "/": ["....#", "....#", "...#.", "...#.", "..#..", ".#...", "#...."],
-  "%": ["#...#", "#..#.", "...#.", "..#..", ".#...", "#..#.", "#...#"],
-  $: ["..#..", ".####", "#.#..", ".###.", "..#.#", "####.", "..#.."],
-  "&": [".##..", "#..#.", "#.#..", ".#...", "#.#.#", "#..#.", ".##.#"],
-  "+": [".....", "..#..", "..#..", ".###.", "..#..", "..#..", "....."],
-  "=": [".....", ".....", ".###.", ".....", ".###.", ".....", "....."],
-  "—": [".....", ".....", ".....", "#####", ".....", ".....", "....."],
-};
-
-function glyphOf(ch) {
-  return GLYPHS[ch] || GLYPHS["?"];
-}
-
-function drawChar(ch, x, y, s, c) {
-  const g = glyphOf(ch);
-  for (let r = 0; r < 7; r++) {
-    for (let col = 0; col < 5; col++) {
-      if (g[r][col] === "#") fillRect(x + col * s, y + r * s, s, s, c);
-    }
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const ang = (-90 + i * 36) * (Math.PI / 180);
+    const rr = i % 2 === 0 ? r : r * 0.45;
+    pts.push([
+      Math.round(cx + rr * Math.cos(ang)),
+      Math.round(cy + rr * Math.sin(ang)),
+    ]);
   }
+  fillPolygon(pts, c);
+  polygonOutline(pts, INK);
 }
 
-// Advance per character is 6*s; a space advances the same.
-function textWidth(t, s) {
-  if (t.length === 0) return 0;
-  return t.length * 6 * s - s;
-}
+// ---- PNG encoding (8-bit RGB, filter 0) ----
 
-function drawText(t, x, y, s, c, bold) {
-  let cx = x;
-  for (const ch of t) {
-    if (ch !== " ") {
-      drawChar(ch, cx, y, s, c);
-      if (bold && s >= 2) drawChar(ch, cx + 1, y, s, c);
-    }
-    cx += 6 * s;
-  }
-  return cx;
-}
-
-function drawTextCentered(t, cx, y, s, c, bold) {
-  drawText(t, cx - ((textWidth(t, s) / 2) | 0), y, s, c, bold);
-}
-
-function wrapWords(t, maxW, s) {
-  const words = t.split(" ");
-  const lines = [];
-  let cur = "";
-  for (const w of words) {
-    const trial = cur === "" ? w : cur + " " + w;
-    if (textWidth(trial, s) <= maxW || cur === "") {
-      cur = trial;
-    } else {
-      lines.push(cur);
-      cur = w;
-    }
-  }
-  if (cur !== "") lines.push(cur);
-  return lines;
-}
-
-// Draw wrapped text; returns the y just below the last line.
-function para(t, x, y, maxW, s, c, leading, bold) {
-  const lines = wrapWords(t, maxW, s);
-  const step = 7 * s + (leading === undefined ? 4 : leading);
-  for (let i = 0; i < lines.length; i++) {
-    drawText(lines[i], x, y + i * step, s, c, bold);
-  }
-  return y + lines.length * step;
-}
-
-// ------------------------------------------------------------------- icons
-// Each icon draws inside a small square at (x, y) with side `s` (~30px).
-
-function iconGlobe(x, y, s) {
-  const u = s / 30;
-  circle(x + 15 * u, y + 15 * u, 12 * u, BLUE);
-  fillCircle(x + 11 * u, y + 11 * u, 3 * u, BLUE);
-  fillCircle(x + 19 * u, y + 19 * u, 4 * u, BLUE);
-  line(x + 3 * u, y + 15 * u, x + 27 * u, y + 15 * u, BLUE, 1);
-  line(x + 15 * u, y + 3 * u, x + 15 * u, y + 27 * u, BLUE, 1);
-}
-
-function iconFlame(x, y, s) {
-  const u = s / 30;
-  fillPoly(
-    [
-      [x + 15 * u, y + 2 * u],
-      [x + 24 * u, y + 14 * u],
-      [x + 20 * u, y + 24 * u],
-      [x + 10 * u, y + 24 * u],
-      [x + 6 * u, y + 14 * u],
-    ],
-    RED
-  );
-  fillPoly(
-    [
-      [x + 15 * u, y + 12 * u],
-      [x + 20 * u, y + 20 * u],
-      [x + 15 * u, y + 24 * u],
-      [x + 10 * u, y + 20 * u],
-    ],
-    GOLD
-  );
-  hline(x + 4 * u, x + 26 * u, y + 27 * u, INK, 2);
-}
-
-function iconBuilding(x, y, s) {
-  const u = s / 30;
-  // A five-storey block with its top corner broken off.
-  fillPoly(
-    [
-      [x + 6 * u, y + 4 * u],
-      [x + 24 * u, y + 4 * u],
-      [x + 24 * u, y + 26 * u],
-      [x + 6 * u, y + 26 * u],
-    ],
-    SOFT
-  );
-  fillPoly(
-    [
-      [x + 6 * u, y + 4 * u],
-      [x + 13 * u, y + 8 * u],
-      [x + 10 * u, y + 12 * u],
-      [x + 6 * u, y + 10 * u],
-    ],
-    PAPER
-  );
-  for (let r = 0; r < 4; r++) {
-    for (let c = 0; c < 3; c++) {
-      fillRect(x + (9 + c * 5) * u, y + (7 + r * 5) * u, 3 * u, 3 * u, PAPER);
-    }
-  }
-  fillCircle(x + 10 * u, y + 28 * u, 1 * u, INK);
-  fillCircle(x + 16 * u, y + 28 * u, 1 * u, INK);
-  fillCircle(x + 22 * u, y + 28 * u, 1 * u, INK);
-}
-
-function iconChip(x, y, s) {
-  const u = s / 30;
-  rect(x + 7 * u, y + 7 * u, 16 * u, 16 * u, INK, 2);
-  fillRect(x + 11 * u, y + 11 * u, 8 * u, 8 * u, BLUE);
-  for (let i = 0; i < 4; i++) {
-    const p = (9 + i * 4) * u;
-    vline(x + p, y + 2 * u, y + 6 * u, INK, 1);
-    vline(x + p, y + 24 * u, y + 28 * u, INK, 1);
-    hline(x + 2 * u, x + 6 * u, y + p, INK, 1);
-    hline(x + 24 * u, x + 28 * u, y + p, INK, 1);
-  }
-}
-
-function iconTrade(x, y, s) {
-  const u = s / 30;
-  // Two overlapping circles (two partners) with a rising arrow.
-  circle(x + 11 * u, y + 15 * u, 8 * u, BLUE);
-  circle(x + 19 * u, y + 15 * u, 8 * u, GOLD);
-  line(x + 4 * u, y + 24 * u, x + 26 * u, y + 8 * u, RED, 2);
-  fillPoly(
-    [
-      [x + 26 * u, y + 8 * u],
-      [x + 19 * u, y + 8 * u],
-      [x + 26 * u, y + 15 * u],
-    ],
-    RED
-  );
-}
-
-function iconCross(x, y, s) {
-  const u = s / 30;
-  fillCircle(x + 15 * u, y + 15 * u, 13 * u, RED);
-  fillRect(x + 13 * u, y + 7 * u, 4 * u, 16 * u, WHITE);
-  fillRect(x + 7 * u, y + 13 * u, 16 * u, 4 * u, WHITE);
-}
-
-const ICONS = {
-  globe: iconGlobe,
-  flame: iconFlame,
-  building: iconBuilding,
-  chip: iconChip,
-  trade: iconTrade,
-  cross: iconCross,
-};
-
-// ------------------------------------------------------------ situation map
-function drawMap(x, y, w, h) {
-  rect(x, y, w, h, INK, 2);
-  drawTextCentered("THREE IMPACT SITES", x + (w / 2) | 0, y + 10, 2, RED, true);
-  hline(x + 10, x + w - 11, y + 34, INK, 1);
-
-  // Map area below the title.
-  const mx = x + 12;
-  const my = y + 44;
-  const mw = w - 24;
-  const mh = h - 122;
-
-  drawText("BALTIC SEA", mx + 66, my + 2, 1, BLUE, false);
-  // Schematic outline of Poland.
-  const outline = [
-    [mx + 18, my + 56],
-    [mx + 66, my + 16],
-    [mx + 132, my + 8],
-    [mx + 202, my + 24],
-    [mx + 242, my + 48],
-    [mx + 230, my + 92],
-    [mx + 254, my + 126],
-    [mx + 222, my + 158],
-    [mx + 188, my + 178],
-    [mx + 122, my + 174],
-    [mx + 74, my + 158],
-    [mx + 28, my + 130],
-    [mx + 12, my + 92],
-  ];
-  fillPoly(outline, SKY);
-  poly(outline, INK, 2);
-
-  // Neighbours.
-  drawText("GERMANY", mx + 2, my + 122, 1, SOFT, false);
-  drawText("UKRAINE", mx + 262, my + 116, 1, SOFT, false);
-
-  // Warsaw.
-  const wx = mx + 140;
-  const wy = my + 98;
-  fillCircle(wx, wy, 4, INK);
-  drawText("WARSAW", wx + 8, wy - 3, 1, INK, true);
-
-  // Impact site 1: Nowy Lipowiec, north-east.
-  const s1x = mx + 214;
-  const s1y = my + 52;
-  star(s1x, s1y, 9, RED);
-  drawText("NOWY", s1x - 62, s1y - 22, 1, RED, true);
-  drawText("LIPOWIEC", s1x - 62, s1y - 14, 1, RED, true);
-
-  // Impact site 2: Rudnik nad Sanem, south.
-  const s2x = mx + 178;
-  const s2y = my + 140;
-  star(s2x, s2y, 9, RED);
-  drawText("RUDNIK NAD", s2x - 72, s2y - 3, 1, RED, true);
-  drawText("SANEM", s2x - 72, s2y + 5, 1, RED, true);
-
-  // Impact site 3: Molodycz, east. The star sits on the eastern border,
-  // so the label goes inside the polygon, above-left of the star, clear
-  // of the border, the dashed flight path and the UKRAINE neighbour label.
-  const s3x = mx + 228;
-  const s3y = my + 92;
-  star(s3x, s3y, 9, RED);
-  drawText("MOLODYCZ", s3x - 62, s3y - 26, 1, RED, true);
-
-  // Dashed flight path from the east.
-  dashedLine(mx + mw - 2, my + 78, s3x + 12, s3y + 4, RED);
-
-  // Caption under the map.
-  hline(x + 10, x + w - 11, y + h - 62, INK, 1);
-  para(
-    "Two missiles and a jet-powered drone came down in south-east Poland on 20 November, 30-50 km from Ukraine.",
-    x + 12,
-    y + h - 54,
-    w - 24,
-    1,
-    INK,
-    3
-  );
-}
-
-// ------------------------------------------------------------------ stories
-const LEAD = {
-  kicker: "BRUSSELS  —  NATO",
-  headline: "NATO MEETS TODAY OVER POLAND MISSILE STRIKE",
-  standfirst:
-    "Council in Brussels as Warsaw seeks more air defences; Rutte vows to defend Poland.",
-  body:
-    "The North Atlantic Council holds an extraordinary meeting in Brussels today after three Russian weapons came down in south-east Poland on 20 November during a mass strike on Ukraine. Poland asks NATO for more air defences. PM Tusk calls it an intentional provocation.",
-  next: "TODAY: NATO council meets in Brussels.",
-};
-
-const STORIES = [
-  {
-    kicker: "CLIMATE",
-    icon: "globe",
-    headline: "COP31 COLLAPSES WITH NO DEAL AS EU REJECTS TEXT",
-    body:
-      "The Antalya talks ended on Sunday with no cover decision after the EU rejected a draft that made no mention of fossil fuels. The summit ran about 48 hours into overtime.",
-  },
-  {
-    kicker: "BAHRAIN",
-    icon: "flame",
-    headline: "IRAN HITS BAHRAIN: US BASES TARGETED, TWO HURT",
-    body:
-      "The IRGC launched a missile-and-drone attack on US positions in Bahrain on Saturday. A civilian plant on Sitra Island caught fire; two people were hurt, one critically.",
-  },
-  {
-    kicker: "UKRAINE",
-    icon: "building",
-    headline: "DRONE HITS KYIV FLAT, 14 STILL MISSING",
-    body:
-      "A Russian drone struck a five-storey block in Dymer, north of Kyiv, on Sunday. Part of it collapsed; nine were evacuated and two, including a teenager, were hurt.",
-  },
-  {
-    kicker: "TECH",
-    icon: "chip",
-    headline: "FT LINKS ALICE HUANG TO CHIP-SMUGGLING RING",
-    body:
-      "REPORT: the FT found the ex-Megaspeed chief tied to a network moving restricted AI chips to China. Nvidia says its shipments were legal; no charges have been reported.",
-  },
-  {
-    kicker: "TRADE",
-    icon: "trade",
-    headline: "EU AND INDONESIA SIGN LANDMARK TRADE DEAL",
-    body:
-      "After ten years of talks the two sides signed a pact removing 98.5% of tariffs, worth an estimated EUR 650m a year in duty savings for EU exporters.",
-  },
-  {
-    kicker: "BRAZIL",
-    icon: "cross",
-    headline: "BOLSONARO IN INTENSIVE CARE WITH BOWEL BLOCKAGE",
-    body:
-      "The ex-president, 71, was admitted in Brasilia on Friday with an acute bowel obstruction. The hospital says he is stable and breathing on his own.",
-  },
-];
-
-const TICKER_A = "LATEST: BOAT CAPSIZES IN NIGERIA, AT LEAST 24 DEAD";
-const TICKER_B = "FRANCE: 82,500 MARCH IN 6TH WEEKEND OF PROTESTS — UK-EU RESET DEAL";
-const FOOTER =
-  "Sources: Reuters, AP, AFP, Financial Times, Bloomberg, European Commission, Al Jazeera — All stories reported 20-23 November 2026.";
-
-// -------------------------------------------------------------------- page
-function drawPage() {
-  fillRect(0, 0, W, H, PAPER);
-  // Frame.
-  rect(8, 8, W - 16, H - 16, INK, 2);
-
-  // Masthead.
-  drawTextCentered("THE WORLD TODAY", W / 2, 24, 7, INK, true);
-  hline(28, W - 29, 84, INK, 1);
-  drawText("WORLD EDITION", 28, 94, 2, SOFT, false);
-  drawTextCentered("MONDAY, 23 NOVEMBER 2026", W / 2, 94, 2, RED, true);
-  drawText("No. 327", W - 28 - textWidth("No. 327", 2), 94, 2, SOFT, false);
-  hline(28, W - 29, 116, INK, 3);
-  hline(28, W - 29, 121, INK, 1);
-
-  // ---- Lead story (left) + situation map (right).
-  const leadX = 28;
-  const leadW = 600;
-  const leadY = 134;
-  drawText(LEAD.kicker, leadX, leadY, 2, RED, true);
-  // Small NATO-style emblem at the top right of the lead column.
-  fillCircle(leadX + leadW - 16, leadY + 7, 11, BLUE);
-  circle(leadX + leadW - 16, leadY + 7, 11, INK);
-  star(leadX + leadW - 16, leadY + 7, 7, WHITE);
-  let y = leadY + 24;
-  y = para(LEAD.headline, leadX, y, leadW, 4, INK, 6, true);
-  y += 6;
-  y = para(LEAD.standfirst, leadX, y, leadW, 2, BLUE, 4, false);
-  y += 8;
-  y = para(LEAD.body, leadX, y, leadW, 2, INK, 4, false);
-  y += 10;
-  hline(leadX, leadX + leadW - 1, y, INK, 1);
-  y += 8;
-  para(LEAD.next, leadX, y, leadW, 2, RED, 4, true);
-
-  drawMap(652, 134, 344, 284);
-
-  hline(28, W - 29, 430, INK, 2);
-
-  // ---- Six supporting stories in a 2 x 3 grid.
-  const colW = 472;
-  const colX = [28, 524];
-  const rowY = [438, 604, 770];
-  const rowH = 160;
-  for (let i = 0; i < STORIES.length; i++) {
-    const st = STORIES[i];
-    const cx = colX[i % 2];
-    const cy = rowY[(i / 2) | 0];
-    rect(cx, cy, colW, rowH, INK, 1);
-    fillRect(cx + 1, cy + 1, colW - 2, 20, SAND);
-    drawText(st.kicker, cx + 10, cy + 6, 1, RED, true);
-    ICONS[st.icon](cx + colW - 40, cy + 26, 30);
-    let sy = cy + 30;
-    sy = para(st.headline, cx + 10, sy, colW - 56, 2, INK, 4, true);
-    sy += 4;
-    para(st.body, cx + 10, sy, colW - 20, 2, INK, 4, false);
-  }
-
-  // ---- Ticker.
-  const ty = 938;
-  fillRect(28, ty, W - 56, 44, DARKRED);
-  drawText(TICKER_A, 40, ty + 6, 2, WHITE, false);
-  drawText(TICKER_B, 40, ty + 25, 2, WHITE, false);
-
-  // ---- Footer.
-  drawTextCentered(FOOTER, W / 2, 988, 1, SOFT, false);
-}
-
-// ------------------------------------------------------------- PNG encoder
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -667,50 +143,313 @@ const CRC_TABLE = (() => {
   return t;
 })();
 
-function crc32(data) {
+function crc32(b) {
   let c = 0xffffffff;
-  for (const b of data) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
+  for (let i = 0; i < b.length; i++) c = CRC_TABLE[(c ^ b[i]) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 
 function pngChunk(type, data) {
   const len = Buffer.alloc(4);
   len.writeUInt32BE(data.length);
-  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const td = Buffer.from(type, "ascii");
   const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(body));
-  return Buffer.concat([len, body, crc]);
+  crc.writeUInt32BE(crc32(Buffer.concat([td, data])));
+  return Buffer.concat([len, td, data, crc]);
 }
 
-function encodePng() {
-  const stride = W * 3;
-  const raw = Buffer.alloc(H * (stride + 1));
+function encodePNG() {
+  const raw = Buffer.alloc(H * (1 + W * 3));
   for (let y = 0; y < H; y++) {
-    raw[y * (stride + 1)] = 0; // filter: none
-    Buffer.from(buf.buffer, y * stride, stride).copy(raw, y * (stride + 1) + 1);
+    raw[y * (1 + W * 3)] = 0;
+    raw.set(buf.subarray(y * W * 3, (y + 1) * W * 3), y * (1 + W * 3) + 1);
   }
+  const idat = zlib.deflateSync(raw, { level: 9 });
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(W, 0);
   ihdr.writeUInt32BE(H, 4);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 2; // colour type: truecolour RGB
+  ihdr[8] = 8;
+  ihdr[9] = 2;
   ihdr[10] = 0;
   ihdr[11] = 0;
   ihdr[12] = 0;
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     pngChunk("IHDR", ihdr),
-    pngChunk("IDAT", deflateSync(raw, { level: 9 })),
+    pngChunk("IDAT", idat),
     pngChunk("IEND", Buffer.alloc(0)),
   ]);
 }
 
-// --------------------------------------------------------------------- main
+// ---- 5x7 bitmap font. Each glyph is 7 rows; bit 4 is the left pixel. ----
+const FONT = {
+  A: [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
+  B: [0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e],
+  C: [0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e],
+  D: [0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e],
+  E: [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f],
+  F: [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10],
+  G: [0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f],
+  H: [0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
+  I: [0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e],
+  J: [0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0c],
+  K: [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
+  L: [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f],
+  M: [0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11],
+  N: [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
+  O: [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
+  P: [0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10],
+  Q: [0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d],
+  R: [0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11],
+  S: [0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e],
+  T: [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
+  U: [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
+  V: [0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04],
+  W: [0x11, 0x11, 0x11, 0x15, 0x15, 0x1b, 0x11],
+  X: [0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11],
+  Y: [0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04],
+  Z: [0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f],
+  a: [0x00, 0x00, 0x0e, 0x01, 0x0f, 0x11, 0x0f],
+  b: [0x10, 0x10, 0x1e, 0x11, 0x11, 0x11, 0x1e],
+  c: [0x00, 0x00, 0x0e, 0x11, 0x10, 0x11, 0x0e],
+  d: [0x01, 0x01, 0x0f, 0x11, 0x11, 0x11, 0x0f],
+  e: [0x00, 0x00, 0x0e, 0x11, 0x1f, 0x10, 0x0e],
+  f: [0x06, 0x09, 0x08, 0x1e, 0x08, 0x08, 0x08],
+  g: [0x00, 0x0f, 0x11, 0x11, 0x0f, 0x01, 0x0e],
+  h: [0x10, 0x10, 0x1e, 0x11, 0x11, 0x11, 0x11],
+  i: [0x04, 0x00, 0x0c, 0x04, 0x04, 0x04, 0x0e],
+  j: [0x02, 0x00, 0x06, 0x02, 0x02, 0x02, 0x12],
+  k: [0x10, 0x10, 0x12, 0x14, 0x18, 0x14, 0x12],
+  l: [0x0c, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e],
+  m: [0x00, 0x00, 0x1a, 0x15, 0x15, 0x15, 0x15],
+  n: [0x00, 0x00, 0x1e, 0x11, 0x11, 0x11, 0x11],
+  o: [0x00, 0x00, 0x0e, 0x11, 0x11, 0x11, 0x0e],
+  p: [0x00, 0x00, 0x1e, 0x11, 0x11, 0x1e, 0x10],
+  q: [0x00, 0x00, 0x0f, 0x11, 0x11, 0x0f, 0x01],
+  r: [0x00, 0x00, 0x16, 0x19, 0x10, 0x10, 0x10],
+  s: [0x00, 0x00, 0x0f, 0x10, 0x0e, 0x01, 0x1e],
+  t: [0x04, 0x04, 0x1f, 0x04, 0x04, 0x04, 0x03],
+  u: [0x00, 0x00, 0x11, 0x11, 0x11, 0x13, 0x0d],
+  v: [0x00, 0x00, 0x11, 0x11, 0x11, 0x0a, 0x04],
+  w: [0x00, 0x00, 0x11, 0x11, 0x15, 0x15, 0x0a],
+  x: [0x00, 0x00, 0x11, 0x11, 0x0a, 0x11, 0x11],
+  y: [0x00, 0x00, 0x11, 0x11, 0x11, 0x0f, 0x01],
+  z: [0x00, 0x00, 0x1f, 0x02, 0x04, 0x08, 0x1f],
+  "0": [0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e],
+  "1": [0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e],
+  "2": [0x0e, 0x11, 0x01, 0x06, 0x08, 0x10, 0x1f],
+  "3": [0x1f, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0e],
+  "4": [0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02],
+  "5": [0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e],
+  "6": [0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e],
+  "7": [0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
+  "8": [0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e],
+  "9": [0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c],
+  " ": [0, 0, 0, 0, 0, 0, 0],
+  ".": [0, 0, 0, 0, 0, 0x0c, 0x0c],
+  ",": [0, 0, 0, 0, 0x0c, 0x04, 0x08],
+  ":": [0, 0x0c, 0x0c, 0, 0x0c, 0x0c, 0],
+  ";": [0, 0x0c, 0x0c, 0, 0x0c, 0x04, 0x08],
+  "!": [0x04, 0x04, 0x04, 0x04, 0x04, 0, 0x04],
+  "?": [0x0e, 0x11, 0x01, 0x02, 0x04, 0, 0x04],
+  "-": [0, 0, 0, 0x1f, 0, 0, 0],
+  "—": [0, 0, 0, 0x1f, 0, 0, 0],
+  "–": [0, 0, 0, 0x1f, 0, 0, 0],
+  "(": [0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02],
+  ")": [0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08],
+  "'": [0x04, 0x04, 0x08, 0, 0, 0, 0],
+  "’": [0x04, 0x04, 0x08, 0, 0, 0, 0],
+  '"': [0x0a, 0x0a, 0x0a, 0, 0, 0, 0],
+  "%": [0x19, 0x19, 0x02, 0x04, 0x08, 0x13, 0x13],
+  "/": [0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10],
+  "&": [0x0c, 0x12, 0x14, 0x08, 0x15, 0x12, 0x0d],
+  "€": [0x06, 0x09, 0x10, 0x1e, 0x10, 0x09, 0x06],
+  "$": [0x04, 0x0e, 0x15, 0x0e, 0x15, 0x0e, 0x04],
+  "•": [0, 0, 0x0e, 0x11, 0x11, 0x0e, 0],
+  "ł": [0x0c, 0x04, 0x04, 0x0e, 0x04, 0x04, 0x0e],
+  "[": [0x0e, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0e],
+  "]": [0x0e, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0e],
+  "*": [0, 0x04, 0x15, 0x0e, 0x15, 0x04, 0],
+  "#": [0x0a, 0x0a, 0x1f, 0x0a, 0x1f, 0x0a, 0x0a],
+  "+": [0, 0x04, 0x04, 0x1f, 0x04, 0x04, 0],
+  "=": [0, 0, 0x1f, 0, 0x1f, 0, 0],
+};
+
+// ---- Text helpers ----
+
+function textWidth(s, scale) {
+  return s.length * 6 * scale;
+}
+
+function drawChar(x, y, ch, scale, c) {
+  const g = FONT[ch] || FONT[" "];
+  for (let r = 0; r < 7; r++) {
+    const row = g[r];
+    for (let col = 0; col < 5; col++) {
+      if ((row >> (4 - col)) & 1) fillRect(x + col * scale, y + r * scale, scale, scale, c);
+    }
+  }
+}
+
+function drawText(x, y, s, scale, c) {
+  let cx = x;
+  for (const ch of s) {
+    drawChar(cx, y, ch, scale, c);
+    cx += 6 * scale;
+  }
+  return cx;
+}
+
+function drawCentered(cx, y, s, scale, c) {
+  drawText(cx - Math.floor(textWidth(s, scale) / 2), y, s, scale, c);
+}
+
+function wrapText(s, maxWidth, scale) {
+  const maxChars = Math.max(1, Math.floor(maxWidth / (6 * scale)));
+  const words = s.split(" ");
+  const lines = [];
+  let line = "";
+  for (const w of words) {
+    const trial = line ? line + " " + w : w;
+    if (trial.length <= maxChars) {
+      line = trial;
+    } else {
+      if (line) lines.push(line);
+      line = w;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function drawWrapped(x, y, s, scale, c, maxWidth, pitch) {
+  const lines = wrapText(s, maxWidth, scale);
+  for (let i = 0; i < lines.length; i++) {
+    drawText(x, y + i * pitch, lines[i], scale, c);
+  }
+  return y + lines.length * pitch;
+}
+
+// ---- Page copy (all facts from SPEC.md) ----
+
+const LEAD_KICKER = "NATO COUNCIL MEETS IN BRUSSELS TODAY";
+const LEAD_HEADLINE = "NATO MEETS TODAY OVER POLAND MISSILE INCURSION";
+const LEAD_STANDFIRST =
+  "The North Atlantic Council holds an extraordinary meeting in Brussels today after three Russian weapons came down in south-east Poland on 20 November during a mass strike on Ukraine.";
+const LEAD_BODY =
+  "A Kh-101 cruise missile was confirmed near Nowy Lipowiec; two more objects fell near Rudnik nad Sanem and Mo\u0142odycz. Poland has asked NATO for more air defences \u2014 AWACS surveillance aircraft and F-35 jets \u2014 under Operation Eastern Sentry. Prime Minister Donald Tusk called the incursion an intentional provocation. NATO chief Mark Rutte pledged the alliance would defend every inch of Poland.";
+
+const STORIES = [
+  {
+    h: "COP31 COLLAPSES WITH NO DEAL",
+    b: "The UN climate talks in Antalya ended on Sunday with no cover decision after the EU and others rejected a final draft that made no mention of fossil fuels. The summit ran 44-48 hours into overtime, the longest ever; COP31 president Murat Kurum conceded there was no consensus.",
+  },
+  {
+    h: "IRAN HITS BAHRAIN",
+    b: "On Saturday the IRGC launched a missile-and-drone attack on US military positions in Bahrain, home of the US Navy's Fifth Fleet; a civilian industrial facility on Sitra Island caught fire. Bahrain said two people were injured, one in critical condition. Saudi Arabia, Kuwait and Qatar condemned the attack.",
+  },
+  {
+    h: "DRONE HITS FLAT IN KYIV REGION",
+    b: "On Sunday a Russian drone struck a five-storey residential building in Dymer, north of Kyiv; part of the building collapsed. President Zelenskyy said 14 people were unaccounted for; nine were evacuated and two, including a teenager, were injured.",
+  },
+  {
+    h: "FT LINKS ALICE HUANG TO CHIP NETWORK",
+    b: "REPORT: A Financial Times investigation links Alice Huang, the former Megaspeed executive at the centre of the Nvidia scandal, to a network moving restricted AI chips to China-based users. REPORT: The Information said it moved about 240,000 banned chips worth $7.5bn. Nvidia says its shipments were legal and authorised; no charges have been reported.",
+  },
+  {
+    h: "EU AND INDONESIA SIGN TRADE DEAL",
+    b: "After ten years of talks the two sides signed a Comprehensive Economic Partnership Agreement (CEPA) removing 98.5% of tariffs, worth an estimated \u20ac650m a year in duty savings for EU exporters.",
+  },
+  {
+    h: "BOLSONARO IN INTENSIVE CARE",
+    b: "Brazil's former president, 71, was admitted to the DF Star hospital in Brasilia with an acute bowel obstruction on Friday. The hospital says he is clinically stable, conscious and breathing on his own, with no discharge date set. He is serving a 27-year sentence for plotting a coup.",
+  },
+];
+
+const TICKER_1 = "BAYELSA BOAT CAPSIZE KILLS AT LEAST 24 \u2014 FRANCE: 82,500 AT PROTESTS";
+const TICKER_2 = "UK AND EU AGREE BREXIT RESET DEAL ON FOOD, CARBON AND YOUTH MOBILITY";
+
+const SOURCES =
+  "Sources: EU Today; EuropeSays (AFP); EU Insider; Army Recognition; AP; phys.org; Seoul Economic Daily (Reuters); Helsinki Times; Reuters; ABC News; Times of Israel; Gulf News; Brussels Reporter; Particle News; Financial Times; Bloomberg; The Information; European Commission; Cutthroat News; Al Jazeera; LaPresse.";
+
+// Rough outline of Poland, in page coordinates.
+const POLAND = [
+  [668, 190], [700, 170], [760, 168], [830, 172], [900, 180],
+  [950, 196], [968, 230], [960, 280], [940, 330], [930, 380],
+  [905, 420], [860, 432], [800, 428], [740, 420], [690, 400],
+  [668, 360], [655, 300], [650, 240],
+];
+
+function buildPage() {
+  // Frame.
+  rectOutline(14, 14, 996, 996, INK, 2);
+  rectOutline(20, 20, 984, 984, INK, 1);
+
+  // Masthead.
+  drawCentered(512, 36, "THE WORLD TODAY", 7, INK);
+  hline(30, 96, 964, INK, 2);
+  drawCentered(512, 104, "MONDAY 23 NOVEMBER 2026", 2, INK);
+  hline(30, 124, 964, INK, 1);
+
+  // ---- Lead story (left column) ----
+  drawText(30, 136, LEAD_KICKER, 2, RED);
+  drawWrapped(30, 162, LEAD_HEADLINE, 3, INK, 590, 26);
+  drawWrapped(30, 224, LEAD_STANDFIRST, 2, INK, 590, 20);
+  drawWrapped(30, 316, LEAD_BODY, 1, INK, 590, 12);
+
+  // Pull line.
+  rectOutline(30, 378, 590, 58, RED, 2);
+  drawCentered(325, 390, "DEFEND EVERY INCH OF POLAND", 2, RED);
+  drawCentered(325, 414, "\u2014 NATO CHIEF MARK RUTTE", 1, INK);
+
+  // ---- Map (right column) ----
+  drawText(640, 136, "THREE IMPACT SITES \u2014 SOUTH-EAST POLAND", 1, RED);
+  rectOutline(640, 156, 354, 284, INK, 1);
+  fillPolygon(POLAND, MAPFILL);
+  polygonOutline(POLAND, INK);
+  drawText(768, 232, "POLAND", 2, INK);
+  // Stars, south-east, with labels placed above-left of each star.
+  star(856, 402, 6, RED);
+  drawText(772, 386, "NOWY LIPOWIEC", 1, INK);
+  star(878, 372, 6, RED);
+  drawText(782, 354, "RUDNIK NAD SANEM", 1, INK);
+  star(912, 396, 6, RED);
+  drawText(862, 380, "MO\u0141ODYCZ", 1, INK);
+  drawText(918, 424, "UKRAINE", 1, INK);
+  drawText(640, 448, "IMPACT SITES, 20 NOVEMBER \u2014 KH-101 AND TWO MORE OBJECTS", 1, GREY);
+
+  // ---- Story grid: 2 columns x 3 rows ----
+  hline(30, 478, 964, INK, 2);
+  const cols = [30, 520];
+  const rows = [492, 624, 756];
+  for (let i = 0; i < 6; i++) {
+    const x = cols[i % 2];
+    const y = rows[Math.floor(i / 2)];
+    rectOutline(x, y, 474, 120, INK, 1);
+    const headLines = wrapText(STORIES[i].h, 454, 2);
+    drawWrapped(x + 10, y + 8, STORIES[i].h, 2, INK, 454, 18);
+    const bodyY = y + 8 + headLines.length * 18 + 4;
+    drawWrapped(x + 10, bodyY, STORIES[i].b, 1, INK, 454, 12);
+  }
+
+  // ---- Latest-news ticker ----
+  fillRect(30, 890, 964, 54, INK);
+  fillRect(40, 900, 8, 8, RED);
+  drawText(56, 898, TICKER_1, 2, PAPER);
+  fillRect(40, 922, 8, 8, RED);
+  drawText(56, 920, TICKER_2, 2, PAPER);
+
+  // ---- Sources footer ----
+  drawWrapped(30, 956, SOURCES, 1, GREY, 964, 12);
+}
+
 function main() {
+  buildPage();
   const outDir = process.env.MAKEFUN_OUTPUT_DIR || "/output";
-  mkdirSync(outDir, { recursive: true });
-  drawPage();
-  writeFileSync(join(outDir, "entry.png"), encodePng());
+  fs.mkdirSync(outDir, { recursive: true });
+  const outPath = path.join(outDir, "entry.png");
+  fs.writeFileSync(outPath, encodePNG());
+  console.log("wrote " + outPath);
 }
 
 main();
